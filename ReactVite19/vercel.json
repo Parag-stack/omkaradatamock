@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/occ-api/:path*", "destination": "https://omkaracapital.in/api/:path*" },
+    { "source": "/api/:path*",     "destination": "https://omkaradata.com/api/:path*" }
+  ]
+}
