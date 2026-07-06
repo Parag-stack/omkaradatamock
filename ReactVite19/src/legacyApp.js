@@ -55,6 +55,13 @@ const BROKER_URL  = '/api/brokermaster';
 // Working capital analysis, Asset efficiency, Capital structure,
 // Expense Analysis, Du Pont Analysis, ShareHolding Pattern).
 const FORENSIC_URL = '/api/Forensic_DetailedTables';
+// Forensic Ratios tab — POST { Type:'ratios', CompanyID:'', childType:'',
+// dataFor:'con'|'std', companyID } -> { status, button_status{con,std},
+// Data:[{ header:[{column_1..11}], TableData:[{column_1..11}] }] }.
+// ForensicTooltip: POST { Type:'ratios' } -> Data[0].ToolTip:[{key,toolTip}].
+// The tooltip payload is company-independent, so it's fetched once and cached.
+const RATIOS_URL = '/api/forensic';
+const RATIOS_TOOLTIP_URL = '/api/ForensicTooltip';
 // Company Note — the Forensic page header card is enriched from this.
 // POST + JSON body { CompanyID }. Response Data[0] carries the canonical
 // CompanyName, NSEcode/BSEcode and the exchange deep-links (NSELink/BSELink).
@@ -4413,30 +4420,38 @@ function renderForensicPage() {
   const host = document.getElementById('forensicPage');
   if (!host) return;
   const fp = state.company.fp;
-  const bs = fp.buttonStatus || { con: true, std: true };
+  const activeTab = fp.activeTab || 'analysis';
 
+  // Analysis (0) and Ratios (1) are live; the rest are disabled placeholders.
+  const TAB_KEYS = { 0: 'analysis', 1: 'ratios' };
   const tabsHtml = FP_TABS.map((name, i) => {
-    const isActive = i === 0;                       // only Single Page is live
+    const key = TAB_KEYS[i] || '';
+    const enabled = key !== '';
+    const isActive = enabled && key === activeTab;
     return '<button type="button" class="fp-tab' + (isActive ? ' active' : '') + '"'
-      + (isActive ? '' : ' disabled aria-disabled="true"')
+      + (enabled ? ' data-fptabkey="' + key + '"' : ' disabled aria-disabled="true"')
       + ' data-fptab="' + i + '">' + escapeHtml(name) + '</button>';
   }).join('');
 
-  const modesHtml = '<div class="fp-modes" role="tablist" aria-label="Statement type">'
-    + '<button type="button" class="fp-mode' + (fp.mode === 'con' ? ' active' : '') + '" data-fpmode="con"' + (bs.con ? '' : ' disabled') + '>Consolidated</button>'
-    + '<button type="button" class="fp-mode' + (fp.mode === 'std' ? ' active' : '') + '" data-fpmode="std"' + (bs.std ? '' : ' disabled') + '>Standalone</button>'
-    + '</div>';
-
-  let body;
-  if (fp.loading)      body = '<div class="fr-loading"><div class="fr-loading-text">Loading forensic tables…</div></div>';
-  else if (fp.error)   body = '<div class="fr-error"><p>' + escapeHtml(fp.error) + '</p><button type="button" class="fp-retry" data-fpretry>Retry</button></div>';
-  else                 body = renderForensicPageTables();
+  let inner;
+  if (activeTab === 'ratios') {
+    inner = renderForensicRatios();
+  } else {
+    const bs = fp.buttonStatus || { con: true, std: true };
+    const modesHtml = '<div class="fp-modes" role="tablist" aria-label="Statement type">'
+      + '<button type="button" class="fp-mode' + (fp.mode === 'con' ? ' active' : '') + '" data-fpmode="con"' + (bs.con ? '' : ' disabled') + '>Consolidated</button>'
+      + '<button type="button" class="fp-mode' + (fp.mode === 'std' ? ' active' : '') + '" data-fpmode="std"' + (bs.std ? '' : ' disabled') + '>Standalone</button>'
+      + '</div>';
+    let body;
+    if (fp.loading)      body = '<div class="fr-loading"><div class="fr-loading-text">Loading forensic tables…</div></div>';
+    else if (fp.error)   body = '<div class="fr-error"><p>' + escapeHtml(fp.error) + '</p><button type="button" class="fp-retry" data-fpretry>Retry</button></div>';
+    else                 body = renderForensicPageTables();
+    inner = '<div class="fp-singlepage">' + modesHtml
+      + '<div class="fp-tables cv-forensic">' + body + '</div></div>';
+  }
 
   host.innerHTML =
-    '<nav class="fp-tabs" role="tablist" aria-label="Forensic sections">' + tabsHtml + '</nav>'
-    + '<div class="fp-singlepage">' + modesHtml
-    + '<div class="fp-tables cv-forensic">' + body + '</div>'
-    + '</div>';
+    '<nav class="fp-tabs" role="tablist" aria-label="Forensic sections">' + tabsHtml + '</nav>' + inner;
   wireForensicPage();
 }
 
@@ -4511,6 +4526,25 @@ function renderForensicPageTables() {
 function wireForensicPage() {
   const host = document.getElementById('forensicPage');
   if (!host) return;
+  const fp = state.company.fp;
+  // Forensic sub-tab switch (Analysis ⇄ Ratios). Ratios is lazy-loaded/cached.
+  host.querySelectorAll('.fp-tab[data-fptabkey]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      const key = btn.getAttribute('data-fptabkey');
+      if (!fp || fp.activeTab === key) return;
+      fp.activeTab = key;
+      renderForensicPage();
+      if (key === 'ratios') loadForensicRatios();
+    });
+  });
+  // Ratios tab: tooltip popovers + retry.
+  if (fp && fp.activeTab === 'ratios') {
+    wireRatioTooltips(host);
+    const rr = host.querySelector('[data-fpratioretry]');
+    if (rr) rr.onclick = () => { fp.ratios.data = null; fp.ratios.error = null; loadForensicRatios(); };
+    return;   // the Analysis-only wiring below has nothing to bind on this tab
+  }
   // Consolidated / Standalone toggle.
   host.querySelectorAll('.fp-mode[data-fpmode]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -4566,10 +4600,238 @@ function startForensicSinglePage() {
     // Peer comparison. compare: independent per-table picker + peer list, keyed
     // by section (eq/ff/wc/ae/ea). peerCache: shared payload cache keyed by
     // company id so the same peer is fetched only once across all tables.
-    compare: freshCompareState(), peerCache: {} };
+    compare: freshCompareState(), peerCache: {},
+    // Forensic sub-tab: 'analysis' (default) or 'ratios'. ratios: lazy-loaded,
+    // cached per company (con-first, standalone fallback).
+    activeTab: 'analysis',
+    ratios: { data: null, loading: false, error: null, mode: null } };
   const host = document.getElementById('forensicPage');
   if (host) host.hidden = false;
   loadForensicSinglePage('con');
+}
+
+/* ---- Forensic > Ratios tab ------------------------------------------------
+   A clean, section-grouped 10-year ratios table (latest year leftmost, latest
+   value emphasised) with per-ratio "?" info tooltips. Data is fetched
+   Consolidated-first with a silent Standalone fallback and cached per company;
+   the company-independent tooltip dictionary is fetched once and cached
+   app-wide. A fixed "Consolidated Priority" label sits at the top-left. */
+
+let RATIOS_TOOLTIP_CACHE = null;      // { key -> definition } once loaded
+let RATIOS_TOOLTIP_PROMISE = null;    // dedupes concurrent first loads
+
+function loadRatiosTooltips() {
+  if (RATIOS_TOOLTIP_CACHE) return Promise.resolve(RATIOS_TOOLTIP_CACHE);
+  if (RATIOS_TOOLTIP_PROMISE) return RATIOS_TOOLTIP_PROMISE;
+  RATIOS_TOOLTIP_PROMISE = (async () => {
+    try {
+      const res = await fetch(RATIOS_TOOLTIP_URL, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ Type: 'ratios' }),
+      });
+      const json = await res.json();
+      const arr = json && json.Data && json.Data[0] && json.Data[0].ToolTip;
+      const map = {};
+      (Array.isArray(arr) ? arr : []).forEach(t => {
+        if (t && t.key) map[String(t.key).trim()] = String(t.toolTip || '').trim();
+      });
+      RATIOS_TOOLTIP_CACHE = map;
+    } catch (e) {
+      RATIOS_TOOLTIP_CACHE = {};   // fail soft — the table still renders, just without ? icons
+    }
+    return RATIOS_TOOLTIP_CACHE;
+  })();
+  return RATIOS_TOOLTIP_PROMISE;
+}
+
+const RATIOS_VAL_COLS = ['column_2','column_3','column_4','column_5','column_6','column_7','column_8','column_9','column_10','column_11'];
+
+// Parse the ratios API payload into { years:[…], rows:[{type,label,vals}] }.
+function parseRatios(json) {
+  const d = (json && json.Data && json.Data[0]) || {};
+  const header = (d.header && d.header[0]) || {};
+  // Oldest year first (2016 … 2025), latest on the right.
+  const years = RATIOS_VAL_COLS.map(c => String(header[c] == null ? '' : header[c]).trim()).reverse();
+  const rows = (Array.isArray(d.TableData) ? d.TableData : []).map(r => {
+    const label = String(r.column_1 == null ? '' : r.column_1).trim();
+    const vals = RATIOS_VAL_COLS.map(c => String(r[c] == null ? '' : r[c]).trim()).reverse();
+    const allEmpty = vals.every(v => v === '');
+    let type = 'metric';
+    if (label === '' && allEmpty) type = 'spacer';        // blank separator row
+    else if (label !== '' && allEmpty) type = 'section';  // "I. Return Ratios" heading
+    return { type, label, vals };
+  });
+  return { years, rows };
+}
+
+// Group the flat rows into one entry per section (for section cards). Internal
+// blank rows are kept as sub-group separators (e.g. Balance Sheet Health splits
+// Asset Turnover from Receivable Days); leading/trailing blanks are trimmed.
+function groupRatiosSections(parsed) {
+  const groups = [];
+  let cur = null;
+  parsed.rows.forEach(row => {
+    if (row.type === 'section') { cur = { title: row.label, rows: [] }; groups.push(cur); }
+    else if (row.type === 'metric') {
+      if (!cur) { cur = { title: '', rows: [] }; groups.push(cur); }
+      cur.rows.push(row);
+    } else if (row.type === 'spacer' && cur) {
+      cur.rows.push(row);
+    }
+  });
+  groups.forEach(g => {
+    while (g.rows.length && g.rows[0].type === 'spacer') g.rows.shift();
+    while (g.rows.length && g.rows[g.rows.length - 1].type === 'spacer') g.rows.pop();
+  });
+  return groups.filter(g => g.rows.some(r => r.type === 'metric'));
+}
+
+// True if a payload actually carries ratio values (used for con→std fallback).
+function ratiosHasRows(json) {
+  const d = json && json.Data && json.Data[0];
+  if (!d || !Array.isArray(d.TableData)) return false;
+  return d.TableData.some(r =>
+    String(r.column_1 || '').trim() && RATIOS_VAL_COLS.some(c => String(r[c] || '').trim()));
+}
+
+async function loadForensicRatios() {
+  const fp = state.company.fp;
+  if (!fp) return;
+  const r = fp.ratios;
+  if (r.data || r.loading) return;                 // cached for this company, or in flight
+  r.loading = true; r.error = null;
+  if (fp.activeTab === 'ratios') renderForensicPage();   // show the loading state
+  // Tooltips load in parallel (once, app-wide); re-render when they arrive.
+  loadRatiosTooltips().then(() => {
+    if (state.company.fp === fp && fp.activeTab === 'ratios' && fp.ratios.data) renderForensicPage();
+  });
+
+  const cid = resolveCompanyId(state.company.data);
+  const call = async dataFor => {
+    const res = await fetch(RATIOS_URL, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ Type: 'ratios', CompanyID: '', childType: '', dataFor, companyID: String(cid || '') }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const json = await res.json();
+    if (!json || json.status !== 1) throw new Error((json && json.msg) || 'API failure');
+    return json;
+  };
+
+  try {
+    let json = await call('con');
+    let mode = 'con';
+    const bs = json.button_status || {};
+    // Consolidated unavailable → fall back to Standalone (priority still "con").
+    if ((bs.con === false || !ratiosHasRows(json)) && bs.std !== false) {
+      try { const s = await call('std'); if (ratiosHasRows(s)) { json = s; mode = 'std'; } } catch (e) { /* keep con */ }
+    }
+    if (state.company.fp !== fp) return;
+    r.data = parseRatios(json); r.mode = mode; r.loading = false; r.error = null;
+  } catch (e1) {
+    // Consolidated request failed outright → try Standalone once.
+    try {
+      const s = await call('std');
+      if (state.company.fp !== fp) return;
+      r.data = parseRatios(s); r.mode = 'std'; r.loading = false; r.error = null;
+    } catch (e2) {
+      if (state.company.fp !== fp) return;
+      r.loading = false; r.error = (e1 && e1.message) || 'Failed to load ratios';
+    }
+  }
+  if (state.company.fp === fp && fp.activeTab === 'ratios') renderForensicPage();
+}
+
+function renderForensicRatios() {
+  const r = state.company.fp.ratios;
+  let body;
+  if (r.loading || (r.data === null && !r.error)) {
+    body = '<div class="fr-loading"><div class="fr-loading-text">Loading ratios…</div></div>';
+  } else if (r.error) {
+    body = '<div class="fr-error"><p>' + escapeHtml(r.error) + '</p><button type="button" class="fp-retry" data-fpratioretry>Retry</button></div>';
+  } else {
+    body = renderRatioCards(r.data);
+  }
+  // "Consolidated Priority" label sits at the top-RIGHT; one card per section below.
+  return '<div class="fp-singlepage fp-ratios">'
+    + '<div class="fr-ratios-head">'
+    + '<span class="fr-ratios-mode" title="Consolidated figures are shown; Standalone is used only when Consolidated is unavailable.">Consolidated Priority</span>'
+    + '</div>'
+    + '<div class="fp-tables cv-forensic">' + body + '</div></div>';
+}
+
+// One card per section (I. Return Ratios, II. Survival Probability, …). Each card
+// has its section title on the left and a self-contained 10-year table
+// (2016 → 2025, latest column emphasised) with per-ratio "?" info tooltips.
+function renderRatioCards(parsed) {
+  const tips = RATIOS_TOOLTIP_CACHE || {};
+  const years = parsed.years;
+  const last = years.length - 1;
+  const groups = groupRatiosSections(parsed);
+  if (!groups.length) return '<div class="fr-error"><p>No ratio data available.</p></div>';
+
+  const infoSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+  const yearTh = years.map((y, i) =>
+    '<th class="fr-r-year' + (i === last ? ' fr-r-latest' : '') + '">' + escapeHtml(y) + '</th>').join('');
+
+  return groups.map(g => {
+    const rows = g.rows.map((m, idx) => {
+      if (m.type === 'spacer') {
+        if (idx > 0 && g.rows[idx - 1].type === 'spacer') return '';   // collapse consecutive blanks
+        return '<tr class="fr-r-gap"><td colspan="' + (years.length + 1) + '"></td></tr>';
+      }
+      const tip = tips[m.label];
+      const info = tip
+        ? '<span class="fr-r-info" tabindex="0" role="button" aria-label="' + escapeHtml(m.label + '. ' + tip) + '" data-label="' + escapeHtml(m.label) + '" data-tip="' + escapeHtml(tip) + '">' + infoSvg + '</span>'
+        : '';
+      const nameCell = '<td class="fr-r-name"><span class="fr-r-label">' + escapeHtml(m.label) + '</span>' + info + '</td>';
+      const valCells = m.vals.map((v, i) =>
+        '<td class="fr-r-val' + (i === last ? ' fr-r-latest' : '') + '">' + escapeHtml(v) + '</td>').join('');
+      return '<tr class="fr-r-metric">' + nameCell + valCells + '</tr>';
+    }).join('');
+    return '<section class="fr-ratio-card">'
+      + '<h3 class="fr-ratio-card-title">' + escapeHtml(g.title || 'Ratios') + '</h3>'
+      + '<div class="fr-ratios-scroll"><table class="fr-ratios-table">'
+      + '<thead><tr><th class="fr-r-desc">Description</th>' + yearTh + '</tr></thead>'
+      + '<tbody>' + rows + '</tbody></table></div>'
+      + '</section>';
+  }).join('');
+}
+
+// One shared floating tooltip (position: fixed → never clipped by the scroll
+// container), shown on hover/focus of a "?" info icon.
+function wireRatioTooltips(host) {
+  let tip = document.getElementById('frRatioTip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.id = 'frRatioTip';
+    tip.className = 'fr-ratio-tip';
+    tip.setAttribute('role', 'tooltip');
+    document.body.appendChild(tip);
+  }
+  const hide = () => { tip.classList.remove('open'); tip.style.display = 'none'; };
+  const show = el => {
+    const text = el.getAttribute('data-tip'); if (!text) return;
+    tip.innerHTML = '<strong>' + escapeHtml(el.getAttribute('data-label') || '') + '</strong> ' + escapeHtml(text);
+    tip.style.display = 'block';
+    tip.style.left = '-9999px'; tip.style.top = '-9999px';   // measure off-screen first
+    const a = el.getBoundingClientRect();
+    const t = tip.getBoundingClientRect();
+    let left = a.left + a.width / 2 - t.width / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - t.width - 8));
+    let top = a.top - t.height - 8;
+    if (top < 8) top = a.bottom + 8;   // flip below when there's no room above
+    tip.style.left = Math.round(left) + 'px';
+    tip.style.top = Math.round(top) + 'px';
+    tip.classList.add('open');
+  };
+  host.querySelectorAll('.fr-r-info[data-tip]').forEach(el => {
+    el.addEventListener('mouseenter', () => show(el));
+    el.addEventListener('mouseleave', hide);
+    el.addEventListener('focus', () => show(el));
+    el.addEventListener('blur', hide);
+  });
+  host.querySelectorAll('.fr-ratios-scroll').forEach(sc => sc.addEventListener('scroll', hide, { passive: true }));
 }
 
 /* ---- Peer comparison for cumulative tables ------------------------------

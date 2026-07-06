@@ -251,6 +251,45 @@ The Analysis tab integrates `Forensic_DetailedTables` (`POST` with
 Scope: Forensic page only. The normal company page's Forensic tab is unchanged
 (`#forensicPage` is hidden there).
 
+### Feature — Forensic > Ratios tab
+
+The **Ratios** tab (previously a disabled placeholder) is now live alongside
+Analysis. Clicking it switches the forensic page to a clean, section-grouped
+10-year ratios table.
+
+- **Data**: `POST /api/forensic` with `{ Type:'ratios', CompanyID:'',
+  childType:'', dataFor, companyID }`. Fetched **Consolidated-first with a silent
+  Standalone fallback** (when `button_status.con === false` or the payload has no
+  ratio rows), and **cached per company** so re-opening the tab is instant. A
+  fixed **"Consolidated Priority"** pill sits at the top-left (there's no con/std
+  toggle — consolidated is always prioritised).
+- **Layout**: each ratio section (`I. Return Ratios` … `VI. Cash Flow`) renders as
+  its **own card**, with the section name as the card title on the **left** and a
+  self-contained 10-year table inside. Years run **oldest → latest (2016 → 2025)**,
+  and the **latest column (rightmost) is emphasised** (bold, tinted, hairline-
+  boxed). The Description column and header row are sticky within each card. A
+  fixed **"Consolidated Priority"** pill sits at the **top-right** (there's no
+  con/std toggle — consolidated is always prioritised).
+- **Tooltips**: `POST /api/ForensicTooltip { Type:'ratios' }` returns per-ratio
+  definitions. It's **company-independent, so it's fetched once and cached
+  app-wide** (`RATIOS_TOOLTIP_CACHE`). A **?** info icon (its own `.fr-r-info`
+  class, kept separate from the legacy `.fr-info` so no duplicate `::after`
+  tooltip fires) appears only on rows that have a definition; hovering/focusing
+  shows a single floating tooltip (one shared `position:fixed` element appended
+  to `<body>`, so it's never clipped by a card's horizontal scroll). Loads
+  fail-soft — the table still renders if the tooltip call fails.
+- **Sub-groups**: blank rows *inside* a section (e.g. between Asset Turnover and
+  Receivable Days in Balance Sheet Health) are preserved as a visual gap so the
+  two groups read as distinct; leading/trailing blanks are trimmed.
+- No good/bad colour-coding: the "better" direction differs per ratio, so values
+  are shown neutrally to avoid misleading the reader.
+
+Implementation in `legacyApp.js`: `renderForensicPage()` branches on
+`fp.activeTab` ('analysis' | 'ratios'); `loadForensicRatios()`, `parseRatios()`,
+`renderForensicRatios()` / `renderRatiosTable()`, `loadRatiosTooltips()`, and
+`wireRatioTooltips()`. State lives in `fp.ratios` (per company) and the module-
+level tooltip cache.
+
 ### Feature — Peer comparison ("+ Compare")
 
 Five forensic tables — **Earning Quality, Fund Flow, Working capital analysis,

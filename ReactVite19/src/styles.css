@@ -188,6 +188,51 @@
   #forensicPage .ff-skel { display: inline-block; width: 60%; height: 11px; border-radius: 4px;
     background: linear-gradient(90deg, #EEF1F4 25%, #E3E7EB 50%, #EEF1F4 75%); background-size: 200% 100%; animation: ff-shimmer 1.2s infinite; }
   @keyframes ff-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+  /* ---- Forensic > Ratios tab ---- */
+  #forensicPage .fp-ratios { padding-top: 4px; }
+  #forensicPage .fr-ratios-head { display: flex; align-items: center; justify-content: flex-end; margin: 0 0 14px; }
+  #forensicPage .fr-ratios-mode { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700;
+    letter-spacing: .04em; text-transform: uppercase; color: var(--muted); background: var(--bg-tile, #F5F2EC);
+    border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px; cursor: default; }
+  #forensicPage .fr-ratios-mode::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+  /* One card per ratio section. */
+  #forensicPage .fr-ratio-card { background: #fff; border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px 6px; margin: 0 0 16px; box-shadow: 0 1px 2px rgba(15,23,42,.04); }
+  #forensicPage .fr-ratio-card:last-child { margin-bottom: 0; }
+  #forensicPage .fr-ratio-card-title { text-align: left; margin: 0 0 12px; font-size: 14px; font-weight: 700; color: var(--ink);
+    letter-spacing: -.005em; display: flex; align-items: center; gap: 8px; }
+  #forensicPage .fr-ratio-card-title::before { content: ""; width: 3px; height: 15px; border-radius: 2px; background: var(--accent); flex: none; }
+  #forensicPage .fr-ratios-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; margin-bottom: 8px; }
+  #forensicPage .fr-ratios-table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 12.5px; }
+  #forensicPage .fr-ratios-table thead th { position: sticky; top: 0; z-index: 3; background: var(--ink); color: #fff;
+    font-weight: 600; font-size: 11.5px; padding: 10px 14px; text-align: right; white-space: nowrap; }
+  #forensicPage .fr-ratios-table thead th.fr-r-desc { text-align: left; left: 0; z-index: 4; min-width: 220px; }
+  #forensicPage .fr-ratios-table thead th.fr-r-latest { background: #1b2a3d; }
+  #forensicPage .fr-ratios-table td { padding: 9px 14px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+  #forensicPage .fr-ratios-table tr:last-child td { border-bottom: none; }
+  #forensicPage .fr-ratios-table td.fr-r-name { position: sticky; left: 0; z-index: 2; background: #fff; text-align: left;
+    display: flex; align-items: center; gap: 6px; font-weight: 500; color: var(--ink); min-width: 220px; }
+  #forensicPage .fr-ratios-table td.fr-r-val { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  #forensicPage .fr-ratios-table td.fr-r-latest { font-weight: 700; color: var(--ink); background: #FAFAF7; }
+  #forensicPage .fr-ratios-table thead th.fr-r-latest,
+  #forensicPage .fr-ratios-table td.fr-r-latest { box-shadow: inset 1px 0 0 var(--line), inset -1px 0 0 var(--line); }
+  #forensicPage .fr-ratios-table tr.fr-r-metric:hover td { background: #F4F6F8; }
+  #forensicPage .fr-ratios-table tr.fr-r-metric:hover td.fr-r-latest { background: #EEF0EC; }
+  /* Blank sub-group separator inside a section card (e.g. Balance Sheet Health). */
+  #forensicPage .fr-ratios-table tr.fr-r-gap td { padding: 0; height: 14px; background: #FBFBF9; border-bottom: 1px solid var(--line); }
+  /* Ratios info icon uses its OWN class (not .fr-info) so the legacy .fr-info
+     ::after tooltip doesn't also fire — only the shared floating tooltip shows. */
+  #forensicPage .fr-r-info { display: inline-grid; place-items: center; width: 15px; height: 15px; flex: none; color: var(--muted);
+    cursor: help; border-radius: 50%; outline: none; }
+  #forensicPage .fr-r-info:hover, #forensicPage .fr-r-info:focus-visible { color: var(--accent); }
+  #forensicPage .fr-r-info svg { width: 14px; height: 14px; }
+  /* Shared floating tooltip (appended to <body>). */
+  .fr-ratio-tip { position: fixed; display: none; max-width: 300px; z-index: 1000; pointer-events: none;
+    background: var(--ink, #0F172A); color: #fff; font-family: var(--font); font-size: 12px; line-height: 1.45;
+    padding: 9px 12px; border-radius: 8px; box-shadow: 0 10px 28px rgba(15,23,42,.28); opacity: 0; transition: opacity .1s; }
+  .fr-ratio-tip.open { opacity: 1; }
+  .fr-ratio-tip strong { color: #fff; }
   #forensicPage .fp-sec-head .fp-sec-title { margin: 0; }
 
   /* Earning Quality — "Generate AI Summary" button (heading line, right) and
